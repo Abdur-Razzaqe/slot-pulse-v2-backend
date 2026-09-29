@@ -1,0 +1,28 @@
+{
+  "advisory": {
+    "closeBtn": "button.close, .modal-header button, .advisory-close-btn, button[data-bs-dismiss='modal']"
+  },
+  "login": {
+    "phoneInput": "input#phone, input[type='text'][name='phone'], #mobile_number, input.form-control[placeholder*='Phone']",
+    "passwordInput": "input#password, input[type='password'][name='password'], #access_key",
+    "captchaImg": "img#captcha_img, img[src*='captcha'], .captcha-image-source, #captcha_image",
+    "captchaInput": "input#captcha, input[name='captcha'], #captcha_code",
+    "submitBtn": "button[type='submit'], #login_submit_btn, .btn-login-trigger, button.btn-primary"
+  },
+  "otp": {
+    "splitBoxes": "input.otp-digit, input[id^='otp_'], .otp-cell-matrix input, input[name^='otp']",
+    "verifyBtn": "#verify_otp_btn, button.btn-verify-otp, .otp-submission-trigger"
+  },
+  "fileUpload": {
+    "fileInput": "input[type='file'][name='visa_pdf'], #upload_visa_form",
+    "confirmBtn": "button#confirm_all_info, .btn-file-confirmation-trigger"
+  },
+  "mission": {
+    "confirmBtn": "button.mission-confirm-btn, #select_mission_btn"
+  },
+  "calendar": {
+    "availableDays": ".day.available, .calendar-day-green, td.slot-open-date",
+    "closeModal": "button.close-modal, .modal-close-x",
+    "continueBtn": "#calendar_continue_btn, button.btn-next-payment-gate"
+  }
+}

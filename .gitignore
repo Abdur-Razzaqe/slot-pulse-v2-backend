@@ -1,0 +1,32 @@
+
+# ১. মেগা সিকিউরিটি লক (বসের ডাটাবেজ চাবি ও এপিআই টোকেন যেন গিটহাবে আপলোড না হয়)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ২. ভারী মেমোরি জ্যাম পার্জ (হাজার হাজার নোড মডিউল ফাইল গিটহাবে আপলোড করা নিষিদ্ধ)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ৩. লোকাল আপলোড এবং ডাইনামিক সেশন বাফার ডিরেক্টরি পার্জ
+backend/uploads/
+uploads/
+*.local
+
+# ৪. উইন্ডোজ ও সিস্টেম ডাস্ট মেমোরি ব্লক
+Thumbs.db
+db.json
+.DS_Store
+.vscode/
+.idea/
+
+
+
+
+node_modules
+*env
