@@ -4625,18 +4625,23 @@ global.io.on("connection", (socket) => {
 
 const startServer = async () => {
   try {
-    // ফাস্টিফাই নোড ইঞ্জিনকে পোর্ট ৫০০০ এ লোকালহোস্টে সচল করা হচ্ছে [INDEX_3]
-    const address = await fastify.listen({ port: PORT, host: "127.0.0.1" });
+    const address = await fastify.listen({
+      port: process.env.PORT || 10000,
+      host: "0.0.0.0",
+    });
+
     console.log(
       `\n===============================================================`,
     );
-    console.log("🚀 SLOT-PULSE V2 CORE SERVER LIVE AT: " + address);
+    console.log("🚀 SLOT-PULSE V2 CORE SERVER LIVE AT CLOUD EDGE: " + address);
     console.log(
       `===============================================================`,
     );
   } catch (err) {
     console.error("❌ Critical Server Bootstrap Failure:", err.message);
+    process.exit(1);
   }
 };
 
+// 🏁 বসের রাজকীয় পুরো ৪৪-মডিউল ক্লাউড নোড ইঞ্জিনের চূড়ান্ত ফায়ার ওয়ান-ট্যাপ ডিসপ্যাচ! [INDEX_3]
 startServer();
