@@ -134,43 +134,37 @@ global.isProActive = true;
 
 // ------------------- API ROUTES & ENDPOINTS -------------------
 
-// =========================================================================
-// 🔓 [THE UNLOCKED PRO KEYS ENGINE ARCHITECTURE] - DOUBLE SYNC FIXED
-// =========================================================================
+// Captcha solver instance factory
+function createCaptchaSolver(apiKey) {
+  if (!apiKey || apiKey.trim() === "") {
+    console.warn("⚠️ No Captcha API key provided. Solver disabled.");
+    return null;
+  }
+  return new Captcha.Solver(apiKey.trim());
+}
+
+// Route: Update keys safely
 fastify.post("/api/config/keys", async (request, reply) => {
   try {
     const { captchaApiKey, pageloadId, siteToken } = request.body || {};
-    console.log(
-      "\n📡 [PRO UNLOCKED KEY SYNC] Intercepting runtime encryption key dispatch...",
-    );
-    // ১. ওরিজিনাল সলভার এপিআই কী বাইন্ডিং (বসের ওরিজিনাল লজিক)
+
     if (captchaApiKey) {
-      global.captchaApiKey = captchaApiKey;
-      if (typeof solver !== "undefined") {
-        solver.apiKey = captchaApiKey; // টাইপস্ক্রিপ্ট রুলস মেনে apikey প্রোপার্টি লক
-      }
-      console.log(
-        "🔑 [CAPTCHA SYNC] Core solver apiKey re-bound successfully!",
-      );
+      solver = createCaptchaSolver(captchaApiKey); // create new instance
+      global.captchaApiKey = captchaApiKey.trim();
+      console.log("🔑 [CAPTCHA SYNC] New solver instance created.");
     }
 
-    // ২. ওরিজিনাল Pageload ID গ্লোবাল মেমরিতে পার্মানেন্ট রিলোড [INDEX_3]
     if (pageloadId && pageloadId.trim().length > 10) {
       global.pageloadId = pageloadId.trim();
-      console.log(
-        `🔒 [PAGELOAD ID LOCK] global.pageloadId updated -> ${global.pageloadId}`,
-      );
+      console.log(`🔒 [PAGELOAD ID LOCK] -> ${global.pageloadId}`);
     }
 
-    // ৩. ওরিজিনাল Site Token গ্লোবাল মেমরিতে পার্মানেন্ট রিলোড [INDEX_3]
     if (siteToken && siteToken.trim().length > 10) {
       global.siteToken = siteToken.trim();
-      console.log(
-        `🔒 [SITE TOKEN LOCK] global.siteToken updated -> ${global.siteToken}`,
-      );
+      console.log(`🔒 [SITE TOKEN LOCK] -> ${global.siteToken}`);
     }
 
-    // চাবিগুলো মঙ্গোডিবি ক্লাউড এটলাসেও আপগ্রেড আপডেট করে রাখা
+    // Save to MongoDB
     if (global.dbInstance) {
       const collection = global.dbInstance.collection("system_configurations");
       await collection.updateOne(
@@ -187,49 +181,49 @@ fastify.post("/api/config/keys", async (request, reply) => {
       );
     }
 
-    console.log(
-      "✅ [PRO UNLOCKED SUCCESS] Global core runtime encryption variables firmly synchronized!\n",
-    );
     return reply.send({
       success: true,
-      isProActive: true,
-      message: "Decentralized solver token synced.",
+      message: "Solver key and config updated successfully.",
     });
   } catch (err) {
+    console.error("❌ Key update failed:", err.message);
     return reply.status(500).send({ success: false, error: err.message });
   }
 });
-// =========================================================================
-// ⚙️ [SYSTEM CONFIG ENGINE]: PRODUCTION HARDENED (FIXED UNDEFINED STRINGS)
-// =========================================================================
+
+// Route: Update system config safely
 fastify.post("/api/config/system", async (request, reply) => {
   try {
-    if (!global.dbInstance)
+    if (!global.dbInstance) {
       throw new Error("Database cluster instance is offline.");
-    const collection = global.dbInstance.collection("system_configurations");
+    }
 
+    const collection = global.dbInstance.collection("system_configurations");
     const payload = request.body || {};
 
-    // ⚡ [CRITICAL MATRIX FIXED]: .env প্রসেস লেয়ারে এবং গ্লোবাল মেমরিতে একসাথে চাবি লক করা
-    process.env.CAPTCHA_API_KEY = payload.captchaApiKey
-      ? String(payload.captchaApiKey).trim()
-      : process.env.CAPTCHA_API_KEY || "";
-    process.env.GEMINI_API_KEY = payload.geminiApiKey
-      ? String(payload.geminiApiKey).trim()
-      : process.env.GEMINI_API_KEY || "";
-    process.env.PAGELOAD_ID = payload.pageloadId
-      ? String(payload.pageloadId).trim()
-      : process.env.PAGELOAD_ID || "";
-    process.env.SITE_TOKEN = payload.siteToken
-      ? String(payload.siteToken).trim()
-      : process.env.SITE_TOKEN || "";
+    // Update ENV + globals safely
+    const captchaApiKey =
+      payload.captchaApiKey?.trim() || process.env.CAPTCHA_API_KEY || "";
+    const geminiApiKey =
+      payload.geminiApiKey?.trim() || process.env.GEMINI_API_KEY || "";
+    const pageloadId =
+      payload.pageloadId?.trim() || process.env.PAGELOAD_ID || "";
+    const siteToken = payload.siteToken?.trim() || process.env.SITE_TOKEN || "";
 
-    global.captchaApiKey = process.env.CAPTCHA_API_KEY;
-    global.geminiApiKey = process.env.GEMINI_API_KEY;
-    global.pageloadId = process.env.PAGELOAD_ID;
-    global.siteToken = process.env.SITE_TOKEN;
+    process.env.CAPTCHA_API_KEY = captchaApiKey;
+    process.env.GEMINI_API_KEY = geminiApiKey;
+    process.env.PAGELOAD_ID = pageloadId;
+    process.env.SITE_TOKEN = siteToken;
 
-    // ১. গ্লোবাল নোড মেমরিতে ডাটা লাইভ পুশ (Millisecond Race Ready)
+    global.captchaApiKey = captchaApiKey;
+    global.geminiApiKey = geminiApiKey;
+    global.pageloadId = pageloadId;
+    global.siteToken = siteToken;
+
+    // Create new solver instance when key changes
+    global.solver = createCaptchaSolver(global.captchaApiKey);
+
+    // Other runtime settings
     global.failoverIp = payload.failoverIp || "https://appointment.ivacbd.com";
     global.apiSelection = payload.apiSelection || "API 1";
     global.captchaSolver = payload.captchaSolver || "Visible Node";
@@ -244,22 +238,16 @@ fastify.post("/api/config/system", async (request, reply) => {
     global.rotationApiKeys = payload.rotationApiKeys || "";
 
     console.log(
-      `\n🍇 [SYSTEM CONFIG SYNC] Keys firmly locked onto Node Process Layer.`,
+      "\n🍇 [SYSTEM CONFIG SYNC] Keys locked onto Node Process Layer.",
     );
     console.log(
-      `🧠 Active AI Core Token: ${global.geminiApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
+      `🧠 Gemini API: ${global.geminiApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
     );
     console.log(
-      `🦎 Active Captcha Engine Token: ${global.captchaApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
+      `🦎 Captcha API: ${global.captchaApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
     );
 
-    // ⚡ [CRITICAL FIX]: undefined প্রিন্ট হওয়া আটকাতে ডাইনামিক ব্যাকআপ চেক
-    console.log(
-      `📡 [DYNAMIC API SYNC] Refreshing microservices map via Selection: ${global.apiSelection}`,
-    );
-    console.log(`-> Target Core Base Path: ${global.failoverIp}\n`);
-
-    // মঙ্গোডিবি ক্লাউড ডাটাবেজে কনফিগ আপসার্ট (Upsert) বা স্থায়ী সেভ [INDEX_3]
+    // Save to MongoDB
     await collection.updateOne(
       { configId: "master_runtime_config" },
       {
@@ -287,7 +275,7 @@ fastify.post("/api/config/system", async (request, reply) => {
 
     return reply.send({
       success: true,
-      message: "System environment parameters updated successfully.",
+      message: "System environment parameters updated safely.",
     });
   } catch (err) {
     console.error("❌ System Config Sync Failure:", err.message);
