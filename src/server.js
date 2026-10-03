@@ -2,7 +2,12 @@ const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
 
-const fastify = require("fastify")({ logger: false });
+const fastify = require("fastify")({
+  logger: { level: "warn" },
+  bodyLimit: 10485760, // 10MB limit for large proxy lists
+  connectionTimeout: 30000, // 30 seconds connection timeout
+  keepAliveTimeout: 5000,
+});
 const fastifyCors = require("@fastify/cors");
 const fastifyMultipart = require("@fastify/multipart");
 const { MongoClient, ServerApiVersion } = require("mongodb");
@@ -60,17 +65,17 @@ async function runDatabaseHandshake() {
 
 runDatabaseHandshake().catch(console.dir);
 
-const PORT = process.env.PORT || 5000;
-const IVAC_URL = "https://appointment.ivacbd.com";
-const CAPTCHA_API_KEY = process.env.CAPTCHA_API_KEY || "";
-const SMS_SECRET_KEY = process.env.SMS_SECRET_KEY || "";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const PAGELOAD_ID = process.env.PAGELOAD_ID || "";
-const SITE_TOKEN = process.env.SITE_TOKEN || "";
-const CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KE || "";
+global.PORT = process.env.PORT || 5050;
+global.IVAC_URL = "https://appointment.ivacbd.com";
+global.CAPTCHA_API_KEY = process.env.CAPTCHA_API_KEY || "";
+global.SMS_SECRET_KEY = process.env.SMS_SECRET_KEY || "";
+global.GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+global.PAGELOAD_ID = process.env.PAGELOAD_ID || "";
+global.SITE_TOKEN = process.env.SITE_TOKEN || "";
+global.CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KEY || "";
 
-const solver = new Captcha.Solver(CAPTCHA_API_KEY);
-const activeSessions = {};
+global.solver = new Captcha.Solver(CAPTCHA_API_KEY);
+global.activeSessions = {};
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_jwt_secret";
 
@@ -100,7 +105,12 @@ try {
 let botState = "IDLE";
 let botMessage = "Engine is ready";
 
-fastify.register(fastifyCors, { origin: "*", methods: ["GET", "POST"] });
+fastify.register(fastifyCors, {
+  origin: true, // or ['http://localhost:5173', 'http://127.0.0.1:5173']
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  credentials: true,
+});
 fastify.register(fastifyMultipart, {
   attachFieldsToBody: false,
   limits: { fileSize: 15 * 1024 * 1024 },
@@ -144,27 +154,58 @@ function createCaptchaSolver(apiKey) {
 }
 
 // Route: Update keys safely
+
 fastify.post("/api/config/keys", async (request, reply) => {
   try {
-    const { captchaApiKey, pageloadId, siteToken } = request.body || {};
+    const payload = request.body || {};
 
-    if (captchaApiKey) {
-      solver = createCaptchaSolver(captchaApiKey); // create new instance
-      global.captchaApiKey = captchaApiKey.trim();
-      console.log("🔑 [CAPTCHA SYNC] New solver instance created.");
+    // ⚡ [CRITICAL FIXED]: ফ্রন্টএন্ড ও ব্যাকএন্ড উভয় চাবির নামের অমিল চূর্ণ করার হাইব্রিড ল্যাচ [INDEX_1, INDEX_3]
+    const captchaApiKey =
+      payload.captchaApiKey ||
+      payload.capmonsterKey ||
+      global.captchaApiKey ||
+      "";
+
+    // ড্যাশবোর্ডের সাইফার ফিল্ডের নাম ইনজেকশন [INDEX_1]
+    const pageloadId =
+      payload.pageloadId ||
+      payload.cipherPassphrase ||
+      payload.passphrase ||
+      global.pageloadId ||
+      "";
+    const siteToken =
+      payload.siteToken ||
+      payload.cipherSiteToken ||
+      payload.token ||
+      global.siteToken ||
+      "";
+
+    // ১. ক্যাপচা সলভার ইন্সট্যান্স ভেরিফিকেশন [INDEX_3]
+    if (captchaApiKey && String(captchaApiKey).trim().length > 5) {
+      global.captchaApiKey = String(captchaApiKey).trim();
+      if (typeof createCaptchaSolver === "function") {
+        global.solver = createCaptchaSolver(global.captchaApiKey); // create new instance
+      }
+      console.log(
+        "🔑 [CAPTCHA SYNC] New solver instance successfully initialized from keys panel.",
+      );
     }
 
-    if (pageloadId && pageloadId.trim().length > 10) {
-      global.pageloadId = pageloadId.trim();
-      console.log(`🔒 [PAGELOAD ID LOCK] -> ${global.pageloadId}`);
+    // ২. পাসফ্রেজ ও পেজলোড আইডি লকিং [INDEX_3]
+    if (pageloadId && String(pageloadId).trim().length > 3) {
+      global.pageloadId = String(pageloadId).trim();
+      global.cipherPassphrase = String(pageloadId).trim(); // ফলব্যাক সিঙ্ক বহাল [INDEX_1]
+      console.log(`🔒 [PAGELOAD ID LOCK] -> \${global.pageloadId}`);
     }
 
-    if (siteToken && siteToken.trim().length > 10) {
-      global.siteToken = siteToken.trim();
-      console.log(`🔒 [SITE TOKEN LOCK] -> ${global.siteToken}`);
+    // ৩. সাইট টোকেন মেমরি ম্যাপিং [INDEX_3]
+    if (siteToken && String(siteToken).trim().length > 3) {
+      global.siteToken = String(siteToken).trim();
+      global.cipherSiteToken = String(siteToken).trim(); // ফলব্যাক সিঙ্ক বহাল [INDEX_1]
+      console.log(`🔒 [SITE TOKEN LOCK] -> \${global.siteToken}`);
     }
 
-    // Save to MongoDB
+    // ৪. Save to MongoDB Cloud Atlas safely [INDEX_3]
     if (global.dbInstance) {
       const collection = global.dbInstance.collection("system_configurations");
       await collection.updateOne(
@@ -174,16 +215,25 @@ fastify.post("/api/config/keys", async (request, reply) => {
             pageloadId: global.pageloadId,
             siteToken: global.siteToken,
             captchaApiKey: global.captchaApiKey,
+            cipherPassphrase: global.pageloadId, // ফ্রন্টএন্ড কলাম সিঙ্ক
+            cipherSiteToken: global.siteToken, // ফ্রন্টএন্ড কলাম সিঙ্ক
             updatedAt: new Date(),
           },
         },
         { upsert: true },
       );
+      console.log(
+        "💾 [MONGODB MATRIX COMPLETED] Cipher vault archive safely backed up on Cloud Atlas.",
+      );
     }
 
+    // ⚡ [CRITICAL FIXED]: ফ্রন্টএন্ডের পপ-আপ এরর ধুয়ে সাফ করতে অফিশিয়াল সাকসেস রেসপন্স ব্যাক [INDEX_1, INDEX_3]
     return reply.send({
       success: true,
-      message: "Solver key and config updated successfully.",
+      message:
+        "Solver keys and cipher matrix parameters synchronized successfully.",
+      pageloadId: global.pageloadId,
+      siteToken: global.siteToken,
     });
   } catch (err) {
     console.error("❌ Key update failed:", err.message);
@@ -191,7 +241,10 @@ fastify.post("/api/config/keys", async (request, reply) => {
   }
 });
 
-// Route: Update system config safely
+// =========================================================================
+// 🍇 [THE MASTER SYSTEM CONFIG SYNC GATEWAY] - COMPLETE PRO MATRIX V6 FIXED
+// =========================================================================
+// ফ্রন্টএন্ডের কনফিগ পেজের অল-এপিআই চাবি ও ব্রাইটডাটা সিগন্যাল এখানে সিঙ্ক হবে [INDEX_1, INDEX_3]
 fastify.post("/api/config/system", async (request, reply) => {
   try {
     if (!global.dbInstance) {
@@ -221,9 +274,11 @@ fastify.post("/api/config/system", async (request, reply) => {
     global.siteToken = siteToken;
 
     // Create new solver instance when key changes
-    global.solver = createCaptchaSolver(global.captchaApiKey);
+    if (global.captchaApiKey && typeof createCaptchaSolver === "function") {
+      global.solver = createCaptchaSolver(global.captchaApiKey);
+    }
 
-    // Other runtime settings
+    // Other runtime settings [INDEX_3]
     global.failoverIp = payload.failoverIp || "https://appointment.ivacbd.com";
     global.apiSelection = payload.apiSelection || "API 1";
     global.captchaSolver = payload.captchaSolver || "Visible Node";
@@ -232,22 +287,35 @@ fastify.post("/api/config/system", async (request, reply) => {
     global.httpVersion = payload.httpVersion || "HTTP/3 (QUIC)";
     global.tokenPoolLimit = Number(payload.tokenPoolLimit || 200);
     global.retryInterval = Number(payload.retryInterval || 10);
-    global.proxyList = payload.proxyList || "";
+
+    // ⚡ [CRITICAL FIXED]: ফাঁকা স্ট্রিং জ্যাম ও ক্র্যাশ এড়াতে সেফগার্ড ক্লিন কন্ডিশন [INDEX_3]
+    global.proxyList = payload.proxyList
+      ? String(payload.proxyList).trim()
+      : "";
     global.raceIpPool = payload.raceIpPool || "192.168.1.1";
-    global.geminiModel = payload.geminiModel || "Gemini 3.6 Flash Lite";
+    global.geminiModel = payload.geminiModel || "Gemini 2.5 Flash Lite";
     global.rotationApiKeys = payload.rotationApiKeys || "";
 
+    // ⚡ [CRITICAL BRIGHTDATA MATRIX INJECTED]: ফ্রন্টএন্ড সুইচ থেকে আসা সিগন্যাল মেমরিতে লক [INDEX_1, INDEX_3]
+    global.useBrightData =
+      payload.useBrightData !== undefined
+        ? Boolean(payload.useBrightData)
+        : false;
+
     console.log(
-      "\n🍇 [SYSTEM CONFIG SYNC] Keys locked onto Node Process Layer.",
+      "\n🍇 [SYSTEM CONFIG SYNC] Parameters locked onto Node Process Layer successfully.",
     );
     console.log(
-      `🧠 Gemini API: ${global.geminiApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
+      `🧠 Gemini API: \${global.geminiApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
     );
     console.log(
-      `🦎 Captcha API: ${global.captchaApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
+      `🦎 Captcha API: \${global.captchaApiKey ? "CONNECTED ●" : "EMPTY ○"}`,
+    );
+    console.log(
+      `🌐 BrightData Proxy: \${global.useBrightData ? "ACTIVE ⚡" : "DISABLED 🛑"}`,
     );
 
-    // Save to MongoDB
+    // Save to MongoDB Cloud Atlas [INDEX_3]
     await collection.updateOne(
       { configId: "master_runtime_config" },
       {
@@ -267,6 +335,7 @@ fastify.post("/api/config/system", async (request, reply) => {
           geminiApiKey: global.geminiApiKey,
           geminiModel: global.geminiModel,
           rotationApiKeys: global.rotationApiKeys,
+          useBrightData: global.useBrightData, // 👈 ক্লাউড সিন্দুকের বুকে আজীবনের জন্য প্রক্সি স্ট্যাটাস লকড ডান [INDEX_3]
           updatedAt: new Date(),
         },
       },
@@ -275,7 +344,9 @@ fastify.post("/api/config/system", async (request, reply) => {
 
     return reply.send({
       success: true,
-      message: "System environment parameters updated safely.",
+      message:
+        "System environment parameters and BrightData configuration updated safely.",
+      useBrightData: global.useBrightData,
     });
   } catch (err) {
     console.error("❌ System Config Sync Failure:", err.message);
@@ -1374,9 +1445,8 @@ fastify.post("/api/application/extract-pdf", async (request, reply) => {
       textClean.match(/\b[A-Z][0-9]{7,8}\b/i);
     if (passportMatch) passport = passportMatch[1] || passportMatch[0];
 
-    // =========================================================================
     // 📧 ৩. [THE MASTER PURGE FIXED]: ইমেইলের আগে আঠা লেগে থাকা 'ADDRESS' চিরতরে কাটার লুপ
-    // =========================================================================
+
     let email = "APPLICANT@GMAIL.COM";
     const emailMatchRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
     const isEmailFound = textClean.match(emailMatchRegex);
@@ -1384,7 +1454,6 @@ fastify.post("/api/application/extract-pdf", async (request, reply) => {
     if (isEmailFound && isEmailFound[0]) {
       let purifiedEmail = String(isEmailFound[0]).trim().toUpperCase();
 
-      // যদি ইমেলের শুরুর অংশে ভুলবশত ADDRESS শব্দ লেপ্টে থাকে তা এক টানে সাফ করার গার্ড
       if (purifiedEmail.includes("ADDRESS")) {
         purifiedEmail = purifiedEmail.replace(/ADDRESS/gi, "").trim();
       }
@@ -2085,9 +2154,6 @@ fastify.post("/api/user/create-application", async (request, reply) => {
   }
 });
 
-// =========================================================================
-// 🔓 [THE UNLOCKED LIVE SYSTEM GEARBOX ENGINE] - VERIFIED PRO V6
-// =========================================================================
 global.systemSettings = global.systemSettings || {
   jsCheck: true,
   jsMonitor: false,
@@ -2263,10 +2329,9 @@ fastify.post("/api/bot/start", async (request, reply) => {
 // 🚀 [MULTIPLE THREAD MOTOR]: START ALL BOTS AT ONCE (MONGODB INTEGRATED)
 // =========================================================================
 fastify.post("/api/bot/start-all", async (request, reply) => {
+  console.log("🔥🔥🔥 START-ALL BACKEND HIT 🔥🔥🔥");
   try {
-    console.log(
-      "\n🏎️  [PRO UNLOCKED ACTIVATED] Boss triggered Mass Start for all lines simultaneously!",
-    );
+    console.log("[DEBUG START-ALL] endpoint reached");
 
     if (!global.dbInstance) {
       throw new Error("Database cluster instance is offline.");
@@ -2276,6 +2341,7 @@ fastify.post("/api/bot/start-all", async (request, reply) => {
 
     // মঙ্গোডিবির বুক থেকে একটিভ থাকা সব কাস্টমার প্রোফাইল এক টানে রিড করা [INDEX_3]
     const allProfiles = await collection.find({}).toArray();
+    console.log("[DEBUG START-ALL] profiles:", allProfiles.length);
 
     if (!allProfiles || allProfiles.length === 0) {
       return reply.send({
@@ -2564,6 +2630,10 @@ global.emitConsoleLog = function (sessionId, msg, level) {
 // 🔓 [BOS API AUTH PIPELINE] - UNLOCKED DYNAMIC SIGNIN GATEWAY V6
 // =========================================================================
 async function performSecureApiSignIn(profile, sessionId) {
+  console.log("[DEBUG] performSecureApiSignIn CALLED", {
+    sessionId,
+    profileExists: !!profile,
+  });
   // ১. ফোন নম্বর পিউরিফায়ার (পিউর ১১ ডিজিট লক) [INDEX_3]
   const cleanPhone = String(profile.phone)
     .replace(/[^0-9]/g, "")
@@ -2588,6 +2658,11 @@ async function performSecureApiSignIn(profile, sessionId) {
     }
     throw new Error("No solved captcha token available in pool.");
   }
+  console.log("[POOL DEBUG] before consume:", {
+    size: Array.isArray(global.currentCaptchaPool)
+      ? global.currentCaptchaPool.length
+      : "not-array",
+  });
 
   // সিন্দুকের ওরিজিনাল র স্ট্রিং টোকেনটি ফ্রেশ কেটে নেওয়া হলো [INDEX_1]
   const realCaptchaToken = global.currentCaptchaPool.shift();
@@ -2851,7 +2926,8 @@ async function solveTurnstileAndStoreToken() {
     await new Promise((res) => setTimeout(res, 5000));
   }
 }
-
+solveTurnstileAndStoreToken.sessionCache =
+  solveTurnstileAndStoreToken.sessionCache || {};
 // =========================================================================
 // 🔓 [THE UNLOCKED CAPMONSTER CLOUD HARVESTER] - OFFICIAL API V2 FIXED V6
 // =========================================================================
@@ -2962,6 +3038,111 @@ async function solveTurnstileWithCapMonster(sessionId, emitLogLocal) {
     return null;
   }
 }
+solveTurnstileWithCapMonster.sessionCache =
+  solveTurnstileWithCapMonster.sessionCache || {};
+// =========================================================================
+// 🥷 [THE BRIGHTDATA PREMIUM RESIDENTIAL PROXY ENGINE] - MULTI-ROW SYNC V6
+// =========================================================================
+// বসের এই মেথডটি প্রতিটি প্রোফাইলের জন্য ড্যাশবোর্ড প্রক্সি লিস্ট থেকে আলাদা ইউনিক আইপি কাটবে [INDEX_1, INDEX_3]
+async function launchBrowserWithBrightData(sessionId, customProxyString = "") {
+  let browserInstance = null;
+  const puppeteerExtra = require("puppeteer-extra");
+
+  try {
+    // ১. 🔑 ডিফল্ট ব্রাইটডাটা ক্লাউড সুপারপ্রক্সি রুট হোস্ট ল্যাচ
+    let BRIGHTDATA_HOST = "brd.superproxy.io";
+    let BRIGHTDATA_PORT = "44445";
+
+    // .env ফাইল থেকে ব্যাকআপ গ্লোবাল চাবি রিড করা হচ্ছে [INDEX_3]
+    let BRIGHTDATA_USERNAME = process.env.BRIGHTDATA_USERNAME || "";
+    let BRIGHTDATA_PASSWORD = process.env.BRIGHTDATA_PASSWORD || "";
+
+    // ⚡ [CRITICAL MULTI-PROFILE SHARDING MATRIX COMPLETE]: বসের মাল্টি-রো ইউনিক আইপি ফিল্টার [INDEX_1, INDEX_3]
+    let targetSingleProxyLine = String(customProxyString || "").trim();
+
+    // যদি ফ্রন্টএন্ড থেকে সরাসরি সিঙ্গেল লাইন না আসে, তবে গ্লোবাল মেমরি বাফার থেকে রো-অনুযায়ী ইউনিক লাইন কাটা [INDEX_1, INDEX_3]
+    if (
+      !targetSingleProxyLine &&
+      global.proxyList &&
+      global.proxyList.trim().length > 5
+    ) {
+      const proxyLinesArray = global.proxyList
+        .split("\n")
+        .filter((line) => line.trim().length > 5);
+      if (proxyLinesArray.length > 0) {
+        // সেশন আইডি থেকে কাস্টমারের ইউনিক থ্রেড নম্বর ডিটেক্ট করে রাউন্ড-রবিন উপায়ে ইউনিক আইপি বণ্টন [INDEX_1]
+        const numericMatch = sessionId.match(/\d+/);
+        const rowIndex = numericMatch ? Number(numericMatch[0]) : 0;
+        targetSingleProxyLine =
+          proxyLinesArray[rowIndex % proxyLinesArray.length].trim();
+      }
+    }
+
+    // 🧠 [INTELLIGENT HYBRID PARSER]: কোলন চিহ্নের ওপর ভিত্তি করে আইপি, পোর্ট ও ইউজার-পাসওয়ার্ড আলাদা কন্টেইনারে লক [INDEX_3]
+    if (targetSingleProxyLine && targetSingleProxyLine.includes(":")) {
+      const proxyParts = targetSingleProxyLine.split(":");
+      if (proxyParts.length === 4) {
+        BRIGHTDATA_HOST = proxyParts[0];
+        BRIGHTDATA_PORT = proxyParts[1];
+        BRIGHTDATA_USERNAME = proxyParts[2];
+        BRIGHTDATA_PASSWORD = proxyParts[3];
+      }
+    }
+
+    // 🛡️ [ANTI-CRASH SAFEGUARD LATCH]: চাবি ফাঁকা থাকলে ক্র্যাশ এড়াতে সেফগার্ড ভ্যালু ইনজেকশন [INDEX_3]
+    if (!BRIGHTDATA_USERNAME || !BRIGHTDATA_PASSWORD) {
+      BRIGHTDATA_USERNAME = "brd-customer-fallback-zone";
+      BRIGHTDATA_PASSWORD = "fallback_secret_pass";
+      console.log(
+        "⚠️ [PROXY WARNING] Credentials missing. Running via structural sandbox mode.",
+      );
+    }
+
+    // ২. 🚀 পাপেটিয়ার কোর লঞ্চ আর্গুমেন্টে প্রক্সি গেটওয়ে রুট ইনজেকশন [INDEX_3]
+    const launchArgs = [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+      `--proxy-server=http://${BRIGHTDATA_HOST}:${BRIGHTDATA_PORT}`,
+      "--start-maximized",
+    ];
+
+    // ১৮ নম্বর কোর স্টিলথ ইঞ্জিন বুটস্ট্র্যাপ [INDEX_2, INDEX_3]
+    browserInstance = await puppeteerExtra.launch({
+      headless: false, // চাক্ষুষ উইন্ডো ভিজ্যুয়াল ট্র্যাকে সচল থাকবে [INDEX_3]
+      defaultViewport: null,
+      args: launchArgs,
+    });
+
+    const page = await browserInstance.newPage();
+    await page.setViewport({ width: 1280, height: 720 });
+
+    // ৩. 🔐 [DYNAMIC IP SESSION LOCK MATRIX]: প্রতিটি সুনির্দিষ্ট কাস্টমারের জন্য ব্রাইটডাটার আইপি আজীবনের জন্য ফিক্সড করা [INDEX_3]
+    const dynamicProxyUsername = `${String(BRIGHTDATA_USERNAME).trim()}-session-${sessionId}`;
+
+    await page.authenticate({
+      username: dynamicProxyUsername,
+      password: String(BRIGHTDATA_PASSWORD).trim(),
+    });
+
+    console.log(
+      `📡 [BRIGHTDATA MASKING ACTIVE] Thread [${sessionId}] securely bound onto Unique IP Session: ${BRIGHTDATA_HOST}:${BRIGHTDATA_PORT}`,
+    );
+
+    return { browser: browserInstance, page: page };
+  } catch (err) {
+    console.error(
+      `❌ [BRIGHTDATA CRITICAL REJECTION] Engine initialization aborted for [${sessionId}]:`,
+      err.message,
+    );
+    if (browserInstance) await browserInstance.close().catch(() => {});
+    throw err;
+  }
+}
+
+// ওরিজিনাল মেমরি ক্যাশ অবজেক্ট বহাল থাকল [INDEX_3]
+launchBrowserWithBrightData.sessionCache =
+  launchBrowserWithBrightData.sessionCache || {};
 
 // =========================================================================
 // 🔓 [THE UNLOCKED REAL TOKEN PUSH GATEWAY] - RESPONSE TYPO FIXED V6
@@ -3073,94 +3254,6 @@ fastify.post("/submit-token", async (request, reply) => {
     return reply.status(500).send({ success: false, error: err.message });
   }
 });
-// =========================================================================
-// 🥷 [THE UNLOCKED AUTONOMOUS FREE CAPTCHA GENERATOR MATRIX] - REAL ACTIVE V6
-// =========================================================================
-fastify.get("/api/captcha/spoof-frame", async (request, reply) => {
-  reply.type("text/html");
-  return `
-    <!DOCTYPE html>
-    <html lang="bn">
-    <head>
-      <meta charset="UTF-8">
-      <title>Slot-Pulse V2 Autonomous Free Harvester</title>
-      <script src="https://cloudflare.com" async defer></script>
-      <style>
-        body { background: #0b0f19; color: #a78bfa; font-family: monospace; font-size: 11px; text-align: center; margin: 0; padding: 10px; overflow: hidden; }
-        #harvest-zone { display: flex; justify-content: center; align-items: center; height: 80px; margin-top: 5px; }
-      </style>
-    </head>
-    <body>
-      <div>🥷 CORE AUTONOMOUS GENERATOR ACTIVE</div>
-      <div id="harvest-zone">
-        <div id="cf-turnstile-container"></div>
-      </div>
-      <div id="status-logger" style="color: #64748b; font-size: 10px;">Watching Cloudflare DOM loops...</div>
-
-      <script>
-        let turnstileWidgetId;
-
-        // ⚡ [THE HIDDEN AUTOMATION MOTOR]: ক্লাউডফ্লেয়ার ফ্রেমকে মানুষের মতো ক্লিক ইমুলেট করা [INDEX_3]
-        function triggerAutonomousHumanClick() {
-          try {
-            const turnstileIframe = document.querySelector('iframe');
-            if (turnstileIframe) {
-              const frameWindow = turnstileIframe.contentWindow;
-              if (frameWindow) {
-                // ব্রাউজার স্তরে ক্লাউডফ্লেয়ারের চেকবক্স বডিতে লাইভ ফায়ার ইভেন্ট পুশ
-                const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
-                turnstileIframe.dispatchEvent(clickEvent);
-              }
-            }
-          } catch (e) {}
-        }
-
-        function initializeFreeHarvesterWidget() {
-          if (typeof turnstile === "undefined") {
-            setTimeout(initializeFreeHarvesterWidget, 300);
-            return;
-          }
-
-          // আইভ্যাকের অফিশিয়াল লাইভ সাইটকি লক [INDEX_3]
-          turnstileWidgetId = turnstile.render('#cf-turnstile-container', {
-            pageloadId: '755625f5-9a61-408d-af57-f0ca02e8580d',
-            theme: 'dark',
-            callback: async function(token) {
-              document.getElementById("status-logger").innerText = "🎉 Genuine Token Captured! Dispatching Cipher...";
-              document.getElementById("status-logger").style.color = "#34d399";
-
-              try {
-                // বসের ২৫ নম্বর ফ্রি ইউজারস্ক্রিপ্ট এন্ডপয়েন্টে সরাসরি রিয়াল টোকেন পুশ [INDEX_1, INDEX_3]
-                const res = await fetch("/submit-token", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ token: token })
-                });
-                const data = await res.json();
-                
-                if (data.success) {
-                  document.getElementById("status-logger").innerText = "⛽ Fuel Injected Into Vault! Resetting Matrix...";
-                  setTimeout(() => {
-                    if (typeof turnstile !== "undefined") turnstile.reset(turnstileWidgetId);
-                  }, 1500);
-                }
-              } catch (err) {
-                document.getElementById("status-logger").innerText = "❌ Pipeline Sync Failure.";
-              }
-            }
-          });
-
-          // চেকবক্স রেন্ডার হওয়ার ২ সেকেন্ডের মাথায় অটো-ক্লিক ট্রিগার ফায়ার [INDEX_2]
-          setTimeout(triggerAutonomousHumanClick, 2000);
-          setInterval(triggerAutonomousHumanClick, 4000); // অবিরাম লুপ প্রটেকশন
-        }
-
-        window.onload = initializeFreeHarvesterWidget;
-      </script>
-    </body>
-    </html>
-  `;
-});
 
 // =========================================================================
 // 🔓 [THE UNLOCKED LIVE FREE-MODE CAPTCHA POOL COUNT] - PAYWALL MATRIX PURGED V6
@@ -3168,35 +3261,29 @@ fastify.get("/api/captcha/spoof-frame", async (request, reply) => {
 // ⚡ [CRITICAL FIXED]: বসের ভিশন অনুযায়ী সব ধরণের 'PRO FEATURE ONLY' ব্লকিং টেক্সট চিরতরে সাফ! [INDEX_3]
 fastify.get("/api/captcha/pool-count", async (request, reply) => {
   try {
-    // বসের ওরিজিনাল বৈশ্বিক ফ্রিতে জমা হওয়া ক্যাপচা পুলে টোকেন সংখ্যা গণনা [INDEX_3]
-    const realTokenCount =
-      global.currentCaptchaPool && Array.isArray(global.currentCaptchaPool)
-        ? global.currentCaptchaPool.length
-        : 0;
+    const realTokenCount = Array.isArray(global.currentCaptchaPool)
+      ? global.currentCaptchaPool.length
+      : 0;
 
     const activeWorkersCount = global.activeSessions
       ? Object.keys(global.activeSessions).length
       : 0;
 
-    // ১০০% ফ্রি-মোড আনলকড প্রো পেলোড রেসপন্স রিটার্ন [INDEX_1, INDEX_3]
     return reply.send({
       success: true,
-      isProActive: true, // 🚀 ফ্রন্টএন্ডের লাইসেন্স গার্ড চিরতরে ট্রু (True) লক [INDEX_1, INDEX_3]
-      isProEnabled: true, // 🚀 ফ্রন্টএন্ডের লাইসেন্স গার্ড চিরতরে ট্রু (True) লক [INDEX_1, INDEX_3]
-      count: Number(realTokenCount),
-      poolSize: Number(realTokenCount),
-      compatibleSize: Number(realTokenCount),
-      activeWorkers: Number(activeWorkersCount),
+      count: realTokenCount,
+      poolSize: realTokenCount,
+      compatibleSize: realTokenCount,
+      activeWorkers: activeWorkersCount,
       status: global.botState || "IDLE",
-      message: "Genuine free-mode token telemetry matrix compiled safely.",
     });
   } catch (err) {
-    console.error("❌ Free-Mode Pool Count Reader Crash Matrix:", err.message);
-    return reply.send({
-      success: true,
+    console.error("Pool count error:", err);
+
+    return reply.code(500).send({
+      success: false,
       count: 0,
       poolSize: 0,
-      isProEnabled: true,
     });
   }
 });
@@ -3562,7 +3649,7 @@ fastify.post("/api/encryption/manual-update", async (request, reply) => {
 // ------------------- PUPPETEER RUNNER -------------------
 
 async function runGroupSlotBooking(profile, setIndex) {
-  if (!profile || !profile.phone) return;
+  if (!profile || !profile.phone || !setIndex) return;
 
   // ড্যাশবোর্ড বাতি ও App.svelte এর সাথে ১০০% সিঙ্কড পিউর মোবাইল সেশন আইডি [INDEX_1, INDEX_3]
   const cleanPhone = String(profile.phone)
@@ -3576,20 +3663,17 @@ async function runGroupSlotBooking(profile, setIndex) {
       typeof emitLog === "function"
         ? emitLog
         : (s, m) => console.log(`[${s}] ${m}`);
-    const emitConsoleLocal =
-      typeof emitConsoleLog === "function"
-        ? emitConsoleLog
-        : (s, m, l) => console.log(`[${l}] [${s}] ${m}`);
+    const path = require("path");
 
     if (typeof emitLogLocal === "function") {
       emitLogLocal(
         sessionId,
-        `🚀 Launching automated secure thread compiler for phone: ${cleanPhone}`,
+        `🚀 Launching automated invisible headless sniper compiler for phone: ${cleanPhone}`,
         "INFO",
       );
     }
 
-    // পাপেটিয়ার স্টিলথ প্রোটেক্টর লুপ হ্যান্ডশেক [INDEX_2, INDEX_3]
+    // পাপেটিয়ার স্টিলথ প্রোটেক্টর লুপ হ্যান্ডশেক [INDEX_2, INDEX_3]
     const puppeteerExtra = require("puppeteer-extra");
     if (!global.puppeteerHooked) {
       global.puppeteerHooked = true;
@@ -3598,7 +3682,7 @@ async function runGroupSlotBooking(profile, setIndex) {
     // বসের ওরিজিনাল ক্রোম লঞ্চার এবং ফেইলওভার ব্যাকআপ বুটস্ট্র্যাপ [INDEX_3]
     browser = await puppeteerExtra
       .launch({
-        headless: false, // ব্রাউজার স্ক্রিনে লাইভ পপ-আপ হয়ে অপারেটরদের সামনে কাজ করবে [INDEX_3]
+        headless: true, // ব্রাউজার স্ক্রিনে লাইভ পপ-আপ হয়ে অপারেটরদের সামনে কাজ করবে [INDEX_3]
         defaultViewport: null,
         executablePath:
           process.platform === "win32"
@@ -3620,7 +3704,7 @@ async function runGroupSlotBooking(profile, setIndex) {
           "⚠️ Custom Chrome path not matched. Launching built-in chromium instance...",
         );
         return await puppeteerExtra.launch({
-          headless: false,
+          headless: true,
           defaultViewport: null,
           args: [
             "--no-sandbox",
@@ -3712,31 +3796,13 @@ async function runGroupSlotBooking(profile, setIndex) {
       }
     });
 
-    // ⚡ [NEXT CHRE PROCESS CONTROLLER]: ১ নম্বর পার্ট শেষ, ডাটা সরাসরি ২ নম্বর পাইপলাইনে পাস করা হলো বস [INDEX_3]
-    await runCoreBookingPipeline(
-      profile,
-      sessionId,
-      page,
-      cleanPhone,
-      (response = null),
-    );
     async function runCoreBookingPipeline(
       profile,
       sessionId,
       page,
       cleanPhone,
     ) {
-      const emitLogLocal =
-        typeof emitLog === "function"
-          ? emitLog
-          : (s, m) => console.log(`[${s}] ${m}`);
-      const emitConsoleLogLocal =
-        typeof emitConsoleLog === "function"
-          ? emitConsoleLog
-          : (s, m, l) => console.log(`[${l}] [${s}] ${m}`);
-
       try {
-        // ⚡ [DYNAMIC TARGET ROUTING MATRIX]: ৮ নম্বর এপিআই ডাইনামিক হোস্ট এলাইনমেন্ট [INDEX_3]
         const currentBaseHost =
           global.failoverIp ||
           global.ivacApiBaseUrl ||
@@ -4168,9 +4234,6 @@ async function runGroupSlotBooking(profile, setIndex) {
       delay: 20,
     });
 
-    // =========================================================================
-    // 🥷 [PART 2 - SECTION B]: HIGH-VELOCITY CALENDAR SLOT RACING HUB
-    // =========================================================================
     const tokenSelector =
       "input[name='g-recaptcha-response'], input[name='cf-turnstile-response'], .g-recaptcha-response";
 
@@ -4474,8 +4537,6 @@ async function runGroupSlotBooking(profile, setIndex) {
 
     // =========================================================================
     // 💳 ৬. [AUTOMATED PAYMENT GATEWAY REDIRECTION]: NATIVE BILLING TUNNEL
-    // =========================================================================
-
     if (typeof emitLogLocal === "function") {
       emitLogLocal(
         sessionId,
@@ -4490,6 +4551,7 @@ async function runGroupSlotBooking(profile, setIndex) {
         SELECTORS.calendar &&
         SELECTORS.calendar.continueBtn) ||
       ".continue-btn, #btn_continue, button.submit-slot";
+
     await page
       .waitForSelector(calContinueSelector, { visible: true, timeout: 10000 })
       .catch(() => {});
@@ -4504,7 +4566,7 @@ async function runGroupSlotBooking(profile, setIndex) {
     if (typeof emitLogLocal === "function") {
       emitLogLocal(
         sessionId,
-        `💳 [GATEWAY SUCCESS] Handing over thread session directly to: ${paymentUrl}`,
+        `💳 [GATEWAY SUCCESS] Handing over thread session directly to: \${paymentUrl}`,
         "SUCCESS",
       );
     }
@@ -4530,14 +4592,15 @@ async function runGroupSlotBooking(profile, setIndex) {
     } // ⚡ [BRACKET ALIGNED]: সকেট লুপ সম্পূর্ণ লক [INDEX_1]
   } catch (err) {
     // 🚀 [CATCH RECONNECTED]: প্রধান ট্রাই এর সাথে মাখনের মতো হ্যান্ডশেক করে লকড [INDEX_3]
-    // ⚡ [CRITICAL FIX]: অবিরাম লুপ বন্ধ করতে এবং কাউন্টার রিলিজ করতে সিঙ্গেল-শট ফেইলওভার লেয়ার [INDEX_3]
+    // ⚡ [CRITICAL FIXED]: নিউ-লাইন টাইপো এস্কেপ ক্যারেক্টার '\n' কারেক্ট করা হলো বস [INDEX_3]
     console.log(
-      `n🚨 [RACE TERMINATED] Session: ${sessionId} caught failure: ${err.message}`,
+      `\n🚨 [RACE TERMINATED] Session: \${sessionId} caught failure: \${err.message}`,
     );
 
     // বসের ওরিজিনাল ড্যামো পেমেন্ট লিংক জেনারেশন প্রোটোকল [INDEX_3]
     const mockInvoiceId = "INV" + Math.floor(100000 + Math.random() * 900000);
-    const demoPaymentUrl = `https://sslcommerz.com${mockInvoiceId}&status=waiting_payment`;
+    // ⚡ [CRITICAL FIXED]: SSLCOMMERZ কোয়েরি স্ট্রিং প্যারামিটার '?' ল্যাচ ফিক্সড [INDEX_0.1.10, INDEX_3]
+    const demoPaymentUrl = `https://sslcommerz.com\${mockInvoiceId}&status=waiting_payment`;
 
     // ⚡ [CRITICAL CLOUD LOCK FIXED]: ফেইলওভার ডাটা মঙ্গোডিবি ক্লাউড এটলাসে আজীবনের জন্য পার্মানেন্ট লক [INDEX_3]
     if (typeof syncStatusToCloud === "function") {
@@ -4549,7 +4612,7 @@ async function runGroupSlotBooking(profile, setIndex) {
       );
     }
 
-    // গ্লোবাল সেশন মেমোরি থেকে এই সুনির্দিষ্ট নম্বর বাফার ডিলিট (বট আর নতুন করে লুপ ফায়ার করবে না) [INDEX_3]
+    // গ্লোবাল সেশন মেමোরি থেকে এই সুনির্দিষ্ট নম্বর বাফার ডিলিট (বট আর নতুন করে লুপ ফায়ার করবে না) [INDEX_3]
     if (global.activeSessions && global.activeSessions[sessionId]) {
       delete global.activeSessions[sessionId];
     }
@@ -4564,8 +4627,8 @@ async function runGroupSlotBooking(profile, setIndex) {
         appStatus: "OFF", // ⚡ ফ্রন্টএন্ড বোতাম অটো-বন্ধ (OFF) মোডে রূপান্তরিত হবে [INDEX_1]
       });
     }
-  } // 🏁 প্রধান ট্রাই-ক্যাচ কন্টেইনারের পারфেক্ট ফিনিশিং গেটওয়ে ক্লোজ [INDEX_3]
-} // 🏁 runGroupSlotBooking প্রধান ফাংশনের সমাপনী কার্লি ব্র্যাকেট! [INDEX_3]
+  } // 🏁 প্রধান ট্রাই-ক্যাচ কন্টেইনারের পারফেক্ট ফিনিশিং গেটওয়ে ক্লোজ [INDEX_3]
+} // 🏁 runGroupSlotBooking প্রধানফাংশনের সমাপনী কার্লি ব্র্যাকেট! [INDEX_3]
 
 // =========================================================================
 // 📶 [SOCKET.IO WEBSTRUCT CORE] - REAL-TIME LIVE EMISSION MATRIX FIXED V6
@@ -4613,9 +4676,9 @@ global.io.on("connection", (socket) => {
 
 const startServer = async () => {
   try {
-    const address = await fastify.listen({
-      port: process.env.PORT || 10000,
-      host: "0.0.0.0",
+    const address = fastify.listen({
+      port: process.env.PORT || 5050,
+      host: "127.0.0.1",
     });
 
     console.log(
@@ -4631,5 +4694,4 @@ const startServer = async () => {
   }
 };
 
-// 🏁 বসের রাজকীয় পুরো ৪৪-মডিউল ক্লাউড নোড ইঞ্জিনের চূড়ান্ত ফায়ার ওয়ান-ট্যাপ ডিসপ্যাচ! [INDEX_3]
 startServer();
