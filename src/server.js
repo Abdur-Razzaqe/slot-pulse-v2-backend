@@ -4678,7 +4678,7 @@ const startServer = async () => {
   try {
     const address = fastify.listen({
       port: process.env.PORT || 5050,
-      host: "127.0.0.1",
+      host: "0.0.0.0",
     });
 
     console.log(
